@@ -99,9 +99,9 @@ class SudoForms(HTMLParser):
                 return
             name = a['name']
             kind = a.get('type', 'submit' if tag == 'button' else 'text').lower()
-            if name == 'password' and kind == 'password':
+            if name == 'password' and tag == 'input' and kind in ('password', 'text'):
                 self.form['password'] = True
-            elif kind == 'hidden' or (name == 'confirm' and kind == 'submit'):
+            elif kind == 'hidden' or (name == 'confirm' and kind in ('submit', 'text', 'button')):
                 self.form['fields'][name] = a.get('value', '')
             elif kind in ('checkbox', 'radio') and 'checked' in a:
                 self.form['fields'][name] = a.get('value', 'on')
@@ -114,12 +114,20 @@ class SudoForms(HTMLParser):
             self.form = None
 
 
+def check_sudo_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed[:2] != urllib.parse.urlsplit(BASE)[:2] or parsed.path != '/user/sudo'
+            or parsed.fragment):
+        raise ValueError('二次验证地址不安全，已停止')
+
+
 def sudo_submission(challenge, password):
     parser = SudoForms()
     parser.feed(challenge.html)
+    parser.close()
     forms = [f for f in parser.forms if f['password']]
     if len(forms) != 1:
-        raise ValueError('无法识别唯一的二次验证表单，已停止；请确认网站是否改变验证方式')
+        raise ValueError(f'二次验证页面解析失败：发现 {len(parser.forms)} 个表单，其中 {len(forms)} 个包含可用的 password 输入框。已停止且未提交验证密码；可能是脚本渲染、额外验证或页面结构变化，请仅提供脱敏的 form/input 标签')
     form = forms[0]
     url = urllib.parse.urljoin(challenge.url, form['action'])
     parsed = urllib.parse.urlsplit(url)
@@ -157,6 +165,8 @@ def fetch(opener, path, payload=None, referer=None):
             if len(raw) > 1024 * 1024:
                 raise ValueError('会话页面超过 1MB 限制')
             html = raw.decode('utf-8')
+            if urllib.parse.urlsplit(path).path == '/user/sudo' and payload is None:
+                check_sudo_url(response.geturl())
             if path == '/home/security':
                 try:
                     check_session_destination(response.geturl())
@@ -177,6 +187,12 @@ def login(opener, username, password, allow_sudo=False):
     except SudoRequired as challenge:
         if not allow_sudo:
             raise
+        # Load the actual confirmation page explicitly with the same CookieJar.
+        # The response that triggered sudo may be an intermediate page.
+        destination = urllib.parse.urlsplit(challenge.url)
+        check_sudo_url(challenge.url)
+        sudo_path = urllib.parse.urlunsplit(('', '', destination.path, destination.query, ''))
+        challenge.html = fetch(opener, sudo_path, referer=BASE + '/home/security')
         path, fields = sudo_submission(challenge, password)
         # One attempt only, same CookieJar. Do not retain the password for polling.
         fetch(opener, path, fields, referer=challenge.url)

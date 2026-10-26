@@ -97,3 +97,7 @@ local-monitor/
 Windows 可双击 `start.bat`（需要 Python Launcher），或在项目文件夹的终端运行 `python server.py`。也可在 IDLE 打开 `server.py` 后按 F5。看到运行地址后，在浏览器中打开 `http://127.0.0.1:8000`。
 
 若将 Python 文件改名为 `test.py`，`static` 文件夹仍需与它同级。`FileNotFoundError: ...static/index.html` 表示前端文件未完整解压到正确位置，与 Python 3.12 版本无关。新版会在启动前检查这些文件，并给出明确提示。
+
+### 二次验证表单兼容性
+
+GOJ/Hydro 的确认输入框可能在 HTML 中省略 `type`，再由 JavaScript 将其改为提交按钮。适配器支持这一结构，并保留服务器给出的 `confirm` 值（包括中文文本），不将其硬编码为布尔值。提交前会用同一会话显式 GET `/user/sudo` 页面。若表单缺失、多个密码表单或目标不安全，会停止并给出不包含凭据的诊断信息；不会执行任意页面脚本。

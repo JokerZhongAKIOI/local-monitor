@@ -71,11 +71,31 @@ class GojTests(unittest.TestCase):
             with self.assertRaises(SudoRequired):
                 login(object(), 'alice', 'test-password')
             self.assertEqual(fetch.call_count, 1)  # Login only, no sudo POST.
-        with patch('goj.fetch') as fetch, patch('goj.read_session', side_effect=[challenge, {'ip': None}]):
+        with patch('goj.fetch', return_value=challenge.html) as fetch, patch('goj.read_session', side_effect=[challenge, {'ip': None}]):
             self.assertEqual(login(object(), 'alice', 'test-password', True), {'ip': None})
-            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(fetch.call_count, 3)
             self.assertEqual(fetch.call_args.args[2]['confirm'], '1')
-        with patch('goj.fetch') as fetch, patch('goj.read_session', side_effect=challenge):
+        with patch('goj.fetch', return_value=challenge.html) as fetch, patch('goj.read_session', side_effect=challenge):
             with self.assertRaisesRegex(ValueError, '未重复提交'):
                 login(object(), 'alice', 'test-password', True)
-            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(fetch.call_count, 3)
+
+    def test_hydro_script_enhanced_confirmation_input(self):
+        from goj import SudoRequired, sudo_submission
+        html = """<form method="POST"><input name="password" type="password">
+        <input value="确认" name="confirm" class="button"></form>"""
+        path, fields = sudo_submission(SudoRequired('https://www.goj.wiki/user/sudo', html), 'test-only')
+        self.assertEqual(path, '/user/sudo')
+        self.assertEqual(fields, {'password': 'test-only', 'confirm': '确认'})
+
+    def test_password_input_without_type(self):
+        from goj import SudoRequired, sudo_submission
+        html = '<form method="post"><input name="password"><button name="confirm" value="1">OK</button></form>'
+        self.assertEqual(sudo_submission(SudoRequired('https://www.goj.wiki/user/sudo', html), 'test-only')[1]['confirm'], '1')
+
+    def test_ambiguous_and_missing_forms_do_not_send(self):
+        from goj import SudoRequired, sudo_submission
+        form = '<form method="post"><input name="password" type="password"><input name="confirm" value="1"></form>'
+        for html in ('<div>script required</div>', form * 2):
+            with self.assertRaisesRegex(ValueError, '未提交验证密码'):
+                sudo_submission(SudoRequired('https://www.goj.wiki/user/sudo', html), 'test-only')
