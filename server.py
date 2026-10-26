@@ -224,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
                 redirect = goj.SameOriginRedirect() if personal else NoRedirect()
                 opener = urllib.request.build_opener(redirect, urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
                 if personal:
-                    goj.login(opener, data['username'], data['password'])
+                    goj.login(opener, data['username'], data['password'], allow_sudo=data.get('allow_sudo') is True)
                 else:
                     result = request_json(opener, login_url, {data['user_field']: data['username'], data['password_field']: data['password']})
                     if not isinstance(result, dict) or result.get('success') is not True:

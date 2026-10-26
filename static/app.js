@@ -43,7 +43,7 @@ $('nav').onclick=e=>{const b=e.target.closest('[data-view]');if(b)switchView(b.d
 $('#manage-sites').onclick=()=>switchView('sites');$('#all-events').onclick=()=>switchView('events');
 $('#site-cards').onclick=e=>{const b=e.target.closest('[data-site]');if(b)openDialog(b.dataset.site);};
 $('#monitor-rows').onclick=async e=>{const b=e.target.closest('[data-action]');if(!b)return;const m=data().monitors.find(m=>m.id===b.dataset.id);if(b.dataset.action==='copy'){if(!m.ip)return toast('暂无可复制的 IP');try{await navigator.clipboard.writeText(m.ip);toast('IP 已复制');}catch{toast('浏览器不支持剪贴板，请手动复制');}return;}if(demo)return toast('这是演示记录。请退出演示后添加真实监控。');if(b.dataset.action==='delete'&&!confirm(`确认移除 ${m.target} 的监控？历史日志仍会保留。`))return;try{await api(`/api/${b.dataset.action}`,{id:m.id});await sync();toast('操作已完成');}catch(e){toast(e.message);}};
-$('#connect-form').onsubmit=async e=>{e.preventDefault();const button=$('#connect-submit');button.disabled=true;button.textContent='正在安全连接…';$('#form-error').textContent='';try{await api('/api/connect',{...Object.fromEntries(new FormData(e.target)),mode:e.target.elements.site.value==='goj'?'personal':'json'});demo=false;sessionStorage.setItem('monitor-demo','off');$('#connect-dialog').close();e.target.reset();await sync();toast('连接成功，开始监控');}catch(err){$('#form-error').textContent=err.message;}finally{button.disabled=false;button.textContent='连接并开始监控 ↗';}};
+$('#connect-form').onsubmit=async e=>{e.preventDefault();const button=$('#connect-submit');button.disabled=true;button.textContent='正在安全连接…';$('#form-error').textContent='';try{await api('/api/connect',{...Object.fromEntries(new FormData(e.target)),mode:e.target.elements.site.value==='goj'?'personal':'json',allow_sudo:e.target.elements.site.value==='goj'&&e.target.elements.allow_sudo.checked});demo=false;sessionStorage.setItem('monitor-demo','off');$('#connect-dialog').close();e.target.reset();await sync();toast('连接成功，开始监控');}catch(err){$('#form-error').textContent=err.message;}finally{button.disabled=false;button.textContent='连接并开始监控 ↗';}};
 $('#export-events').onclick=()=>{const blob=new Blob([JSON.stringify({demo,events:data().events},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`monitor-events-${demo?'demo':'local'}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 render();sync();setInterval(sync,5000);
 
@@ -55,5 +55,7 @@ function configureMode(){
  }
  f.querySelector('details').hidden=personal;
  $('#personal-info').hidden=!personal;
+ $('#sudo-option').hidden=!personal;
+ if(!personal)f.elements.allow_sudo.checked=false;
 }
 $('#connect-form').elements.site.onchange=configureMode;
