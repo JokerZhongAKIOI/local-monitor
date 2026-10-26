@@ -1,4 +1,5 @@
 """Local monitor: standard-library server, authorized JSON API adapters only."""
+import goj
 import argparse
 import http.cookiejar
 import ipaddress
@@ -51,6 +52,8 @@ def init():
         CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY, monitor_id TEXT, site TEXT, target TEXT,
         kind TEXT, message TEXT, time REAL);''')
+        if 'last_activity' not in {r[1] for r in db.execute('PRAGMA table_info(monitors)')}:
+            db.execute('ALTER TABLE monitors ADD COLUMN last_activity REAL')
 
 
 def event(db, m, kind, message):
@@ -98,24 +101,31 @@ def poll(m):
         if session is None:
             return
         try:
-            url = endpoint(m['site'], m['status_path'])
-            url += ('&' if '?' in url else '?') + urllib.parse.urlencode({'username': m['target']})
-            result = request_json(session, url)
-            if not isinstance(result, dict) or type(result.get('online')) is not bool:
-                raise ValueError('状态接口需返回 {"online": true/false, "ip": "IP 地址"}')
-            state = 'online' if result['online'] else 'offline'
-            ip = result.get('ip') if result['online'] else None
-            if ip is not None:
-                ip = str(ipaddress.ip_address(ip))
+            last_activity = None
+            if m['site'] == 'goj' and m['status_path'] == '/home/security':
+                result = goj.read_session(session)
+                state, ip = 'session', result['ip']
+                last_activity = result['last_activity']
+            else:
+                url = endpoint(m['site'], m['status_path'])
+                url += ('&' if '?' in url else '?') + urllib.parse.urlencode({'username': m['target']})
+                result = request_json(session, url)
+                if not isinstance(result, dict) or type(result.get('online')) is not bool:
+                    raise ValueError('状态接口需返回 {"online": true/false, "ip": "IP 地址"}')
+                state = 'online' if result['online'] else 'offline'
+                ip = result.get('ip') if result['online'] else None
+                if ip is not None:
+                    ip = str(ipaddress.ip_address(ip))
             error = None
         except (ValueError, TypeError) as exc:
             state, ip, error = 'error', None, str(exc)
+            last_activity = None
         with connect() as db:
             current = db.execute('SELECT * FROM monitors WHERE id=?', (m['id'],)).fetchone()
             if not current or not current['enabled']:
                 return
-            db.execute('UPDATE monitors SET state=?,ip=?,error=?,checked=? WHERE id=?',
-                       (state, ip, error, time.time(), m['id']))
+            db.execute('UPDATE monitors SET state=?,ip=?,error=?,checked=?,last_activity=? WHERE id=?',
+                       (state, ip, error, time.time(), last_activity, m['id']))
             if current['state'] != state or current['ip'] != ip or current['error'] != error:
                 event(db, m, 'error' if error else 'change', error or f'{state} · {ip or "未提供 IP"}')
 
@@ -183,6 +193,12 @@ class Handler(BaseHTTPRequestHandler):
                 site = data.get('site')
                 if site not in SITES:
                     raise ValueError('无效站点')
+                personal = site == 'goj' and data.get('mode') == 'personal'
+                if personal:
+                    data.update(target=data.get('username'), login_path='/login?redirect=%2F',
+                                status_path='/home/security', user_field='uname', password_field='password')
+                elif site == 'goj' and data.get('status_path') == '/home/security':
+                    raise ValueError('请使用 GOJ 个人会话模式')
                 for key in ('username', 'password', 'target', 'login_path', 'status_path', 'user_field', 'password_field'):
                     if not isinstance(data.get(key), str) or not data[key].strip() or len(data[key]) > 1000:
                         raise ValueError('请完整填写登录信息和接口配置')
@@ -190,10 +206,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('用户名和密码字段名不能相同')
                 login_url = endpoint(site, data['login_path'])
                 endpoint(site, data['status_path'])
-                opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-                result = request_json(opener, login_url, {data['user_field']: data['username'], data['password_field']: data['password']})
-                if not isinstance(result, dict) or result.get('success') is not True:
-                    raise ValueError('登录接口需返回 {"success": true} 并设置会话 Cookie；请核对账号及接口协议')
+                redirect = goj.SameOriginRedirect() if personal else NoRedirect()
+                opener = urllib.request.build_opener(redirect, urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+                if personal:
+                    goj.login(opener, data['username'], data['password'])
+                else:
+                    result = request_json(opener, login_url, {data['user_field']: data['username'], data['password_field']: data['password']})
+                    if not isinstance(result, dict) or result.get('success') is not True:
+                        raise ValueError('登录接口需返回 {"success": true} 并设置会话 Cookie；请核对账号及接口协议')
                 mid = secrets.token_hex(12)
                 m = {'id': mid, **{k: data[k] for k in ('site', 'target', 'login_path', 'status_path', 'user_field', 'password_field')}}
                 with LOCK:
