@@ -63,7 +63,7 @@ def parse_session(html):
     # Select only the monitor client's own session, not a different device.
     current = next((item for item in parser.items if item['current']), None)
     if current is None:
-        raise ValueError('未找到当前活动会话；可能需要重新登录或在网站完成身份确认')
+        raise ValueError('会话页面未包含当前会话标记，可能是页面结构变化或访问受限；请勿将此结果视为离线')
     text = ' '.join(current['text'])
     match = re.search(r'(?:位置|Location)\s*[:：]\s*[^()]*\(([^()]*)\)', text, re.I)
     ip = None
@@ -75,6 +75,19 @@ def parse_session(html):
     return {'ip': ip, 'last_activity': current['last_activity']}
 
 
+def check_session_destination(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed[:2] != urllib.parse.urlsplit(BASE)[:2]:
+        raise ValueError('会话响应来自其他站点，已停止')
+    path = parsed.path.rstrip('/')
+    if path == '/user/sudo':
+        raise ValueError('GOJ 要求本监控会话完成二次身份确认（/user/sudo），当前版本尚未适配；浏览器中的确认不会授权本程序，请勿复制 Cookie')
+    if path == '/login':
+        raise ValueError('GOJ 将本监控会话退回登录页，登录未成功或会话已失效')
+    if path != '/home/security':
+        raise ValueError('GOJ 未返回预期的个人安全页面，可能需要额外验证或权限')
+
+
 def fetch(opener, path, payload=None):
     body = urllib.parse.urlencode(payload).encode() if payload is not None else None
     req = urllib.request.Request(BASE + path, data=body, headers={
@@ -82,6 +95,8 @@ def fetch(opener, path, payload=None):
         'Origin': BASE, 'Referer': BASE + '/login', 'Accept': 'text/html'})
     try:
         with opener.open(req, timeout=8) as response:
+            if path == '/home/security':
+                check_session_destination(response.geturl())
             raw = response.read(1024 * 1024 + 1)
             if len(raw) > 1024 * 1024:
                 raise ValueError('会话页面超过 1MB 限制')

@@ -34,6 +34,30 @@ def validate_assets():
             'static 文件夹必须与运行的 Python 文件位于同一目录。')
 
 
+
+def prepare_login(data):
+    # GOJ defaults to the only mode currently exposed by the UI. Older clients
+    # may omit mode; do not require hidden JSON configuration in that case.
+    personal = data.get('site') == 'goj' and data.get('mode') != 'json'
+    if personal:
+        data.update(target=data.get('username'), login_path='/login?redirect=%2F',
+                    status_path='/home/security', user_field='uname', password_field='password')
+    elif data.get('site') == 'goj' and data.get('status_path') == '/home/security':
+        raise ValueError('请使用 GOJ 个人会话模式')
+    fields = {'username': '登录用户名', 'password': '登录密码', 'target': '监控用户名',
+              'login_path': '登录接口路径', 'status_path': '状态接口路径',
+              'user_field': '用户名字段', 'password_field': '密码字段'}
+    for key, label in fields.items():
+        value = data.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f'请填写{label}' + ('；若已填写，请更新完整项目并重启后台' if personal else ''))
+        if len(value) > 1000:
+            raise ValueError(f'{label}长度超过限制')
+    if data['user_field'] == data['password_field']:
+        raise ValueError('用户名和密码字段名不能相同')
+    return personal
+
+
 def connect():
     db = sqlite3.connect(DB)
     db.row_factory = sqlite3.Row
@@ -171,6 +195,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'error': '无法读取前端文件，请检查完整项目中的 static 文件夹及读取权限'}, 503)
         self.send_response(200)
         self.send_header('Content-Type', mime)
+        self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'self' https://*.arena.ai https://*.e2b.app")
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.end_headers()
@@ -193,17 +218,7 @@ class Handler(BaseHTTPRequestHandler):
                 site = data.get('site')
                 if site not in SITES:
                     raise ValueError('无效站点')
-                personal = site == 'goj' and data.get('mode') == 'personal'
-                if personal:
-                    data.update(target=data.get('username'), login_path='/login?redirect=%2F',
-                                status_path='/home/security', user_field='uname', password_field='password')
-                elif site == 'goj' and data.get('status_path') == '/home/security':
-                    raise ValueError('请使用 GOJ 个人会话模式')
-                for key in ('username', 'password', 'target', 'login_path', 'status_path', 'user_field', 'password_field'):
-                    if not isinstance(data.get(key), str) or not data[key].strip() or len(data[key]) > 1000:
-                        raise ValueError('请完整填写登录信息和接口配置')
-                if data['user_field'] == data['password_field']:
-                    raise ValueError('用户名和密码字段名不能相同')
+                personal = prepare_login(data)
                 login_url = endpoint(site, data['login_path'])
                 endpoint(site, data['status_path'])
                 redirect = goj.SameOriginRedirect() if personal else NoRedirect()

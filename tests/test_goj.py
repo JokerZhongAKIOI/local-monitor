@@ -1,6 +1,6 @@
 import unittest
 import urllib.request
-from goj import parse_session, SameOriginRedirect
+from goj import parse_session, SameOriginRedirect, check_session_destination
 
 
 class GojTests(unittest.TestCase):
@@ -26,3 +26,18 @@ class GojTests(unittest.TestCase):
             handler.redirect_request(req, None, 302, '', {}, 'https://evil.example/')
         redirected = handler.redirect_request(req, None, 302, '', {}, 'https://www.goj.wiki/')
         self.assertIsNone(redirected.data)
+
+    def test_sudo_is_not_expired_session(self):
+        with self.assertRaisesRegex(ValueError, '二次身份确认'):
+            check_session_destination('https://www.goj.wiki/user/sudo?redirect=%2Fhome%2Fsecurity')
+
+    def test_login_destination(self):
+        with self.assertRaisesRegex(ValueError, '登录未成功'):
+            check_session_destination('https://www.goj.wiki/login?redirect=%2F')
+
+    def test_unexpected_page(self):
+        with self.assertRaises(ValueError):
+            check_session_destination('https://www.goj.wiki/')
+        with self.assertRaises(ValueError):
+            check_session_destination('https://evil.example/home/security')
+        check_session_destination('https://www.goj.wiki/home/security')

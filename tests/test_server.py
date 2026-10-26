@@ -25,6 +25,24 @@ class MonitorTests(unittest.TestCase):
         with server.connect() as db:
             return dict(db.execute('SELECT * FROM monitors').fetchone())
 
+    def test_personal_login_only_requires_credentials(self):
+        for mode in ('personal', None):
+            data = dict(site='goj', username='alice', password='test-only')
+            if mode:
+                data['mode'] = mode
+            self.assertTrue(server.prepare_login(data))
+            self.assertEqual(data['target'], 'alice')
+            self.assertEqual(data['user_field'], 'uname')
+            self.assertEqual(data['status_path'], '/home/security')
+
+    def test_missing_password_names_field(self):
+        with self.assertRaisesRegex(ValueError, '登录密码'):
+            server.prepare_login(dict(site='goj', username='alice'))
+
+    def test_json_still_requires_config(self):
+        with self.assertRaisesRegex(ValueError, '监控用户名'):
+            server.prepare_login(dict(site='local', username='alice', password='test-only'))
+
     def test_assets_present(self):
         server.validate_assets()
 
